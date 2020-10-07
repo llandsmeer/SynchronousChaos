@@ -26,7 +26,7 @@
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻
 */
 
-#include <stdio.h>
+#include <stdint.h>
 
 #define W 80
 #define H 25
@@ -35,38 +35,94 @@
 #define HH (H*4)
 
 #define NSIMS 1000
-#define NITERS 1000
+#define NITERS 10
 
-static void set(unsigned char * arr, int stride, int x, int y, int val) {
-    static unsigned char bit[2][4] = {{0x1, 0x2, 0x4, 0x40}, {0x8, 0x10, 0x20, 0x80}};
+inline static
+void set(unsigned char * arr, int stride, int x, int y) {
+    static const unsigned char bit[2][4]
+        = {{0x1, 0x2, 0x4, 0x40}, {0x8, 0x10, 0x20, 0x80}};
     unsigned char mask = bit[x % 2][3 - y % 4];
     arr[x/2*stride+y/4] |= mask;
 }
 
-static void draw(unsigned char * arr, int w, int h) {
+inline static __attribute__((optimize("O0")))
+void draw(unsigned char * arr, int w, int h) {
+    unsigned char buf[3] = {0xe2};
+    const char nl = '\n';
     for (int y = h-1; y >= 0; y--) {
         for (int x = 0; x < w; x++) {
             unsigned char n = arr[x*h+y];
-            printf("\xe2%c%c", (n >> 6) | 0xa0, (n & 0x3f) | 0x80);
+            buf[1] = (n >> 6) | 0xa0;
+            buf[2] = (n & 0x3f) | 0x80;
+            asm("syscall"::"a"(1), "D"(0), "S"(buf), "d"(3));
         }
-        putchar('\n');
+        asm("syscall"::"a"(1), "D"(0), "S"(&nl), "d"(1));
     }
 }
 
-int main() {
-    unsigned char field[W][H] = {};
+
+struct xorshift128_state {
+    uint32_t a, b, c, d;
+};
+
+static uint32_t xorshift128(struct xorshift128_state *state) {
+    uint32_t t = state->d;
+    uint32_t const s = state->a;
+    state->d = state->c;
+    state->c = state->b;
+    state->b = s;
+    t ^= t << 11;
+    t ^= t >> 8;
+    return state->a = t ^ s ^ (s >> 19);
+}
+
+static float random() {
+    static struct xorshift128_state state = { 1, 2, 3, 4 };
+    return (xorshift128(&state) % 65536) / 65536.;
+
+}
+
+void _start() {
+    unsigned char field[W*H] = {0};
+    // simple logmap
+    if (0)
     for (int i = 0; i < WW; i++) {
         float r = 2.4 + (4.0-2.4)*((double)i / WW);
         for (int j = 0; j < NSIMS; j++) {
             double x = (j+.5)/NSIMS;
             for (int k = 0; k < NITERS; k++) {
-                x =  r*x*(1-x);
+                x = r*x*(1-x);
             }
-            int hh = (int)(x*HH+.5);
+            int hh = (int)(x*HH);
             if (hh >= 0 && hh < HH) {
-                set((unsigned char*)field, H, i, hh, 1);
+                set(field, H, i, hh);
             }
         }
     }
-    draw((unsigned char*)field, W, H);
+    if (0)
+    draw(field, W, H);
+    // drive-response
+    for (int i = 0; i < W*H; i++) {
+        field[i] = 0;
+    }
+    for (int i = 0; i < WW; i++) {
+        float r = 2.4 + (4.0-2.4)*((double)i / WW);
+        for (int j = 0; j < NSIMS; j++) {
+            double x = random();
+            double y = random();
+            double z = random();
+            for (int k = 0; k < NITERS; k++) {
+                double xn = r*x*(1-x);
+                double yn = 1.1*x*(1-y);
+                double zn = 1.1*y*(1-z);
+                x = xn; y = yn; z = zn;
+            }
+            int hh = (int)(((z-x)/3. + .5)*HH);
+            if (y >= 0 && y <= 1 && hh >= 0 && hh < HH) {
+                set(field, H, i, hh);
+            }
+        }
+    }
+    draw(field, W, H);
+    asm("mov rax, 60; mov rdi, 0; syscall");
 }

@@ -1,2 +1,4 @@
 .mypy_cache/
 /logmap.x
+peda-session-logmap.x.txt
+.gdb_history
